@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Find tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* ================= SETUP: add your tracker(s) here =================
+   key       = the SIM's 10-digit mobile number
+   channel   = ThingSpeak Channel ID
+   readKey   = ThingSpeak Read API Key (leave "" if the channel is public)
+   name      = what to call the device on the page                       */
+</style>
+<script>
+const DEVICES = {
+  "9699967653": { channel: "3523650", readKey: "23WWKGL9KL17IB5C", name: "My DRONE" }
+};
+const REFRESH_SECONDS = 20;
+const OFFLINE_AFTER_MINUTES = 5;
+</script>
+<style>
+:root {
+  --asphalt: #1E2329;
+  --paper: #EEF1EF;
+  --surface: #FFFFFF;
+  --signal: #FFC72C;
+  --signal-ink: #2A2100;
+  --route: #2357A8;
+  --muted: #5E6873;
+  --line: #D3D8DA;
+  --bad: #B3261E;
+  --good: #1E7A46;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --asphalt: #E8ECEA;
+    --paper: #15191D;
+    --surface: #1E2328;
+    --muted: #9AA4AD;
+    --line: #333B42;
+    --route: #6E9BE0;
+    --bad: #F2867E;
+    --good: #6CCB94;
+  }
+}
+*, *::before, *::after { box-sizing: inherit; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--paper);
+  color: var(--asphalt);
+  font-family: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.app {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  height: 100%;
+}
+.panel {
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+h1 {
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-weight: 700;
+  font-size: 40px;
+  line-height: 1;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.lede { margin: 8px 0 0; color: var(--muted); }
+
+/* the number plate: the one bold element */
+form { display: flex; flex-direction: column; gap: 12px; }
+label { font-weight: 500; font-size: 15px; }
+.plate {
+  display: flex;
+  align-items: center;
+  background: var(--signal);
+  border: 3px solid var(--signal-ink);
+  border-radius: 10px;
+  padding: 6px 14px;
+}
+.plate span {
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-weight: 700;
+  font-size: 28px;
+  color: var(--signal-ink);
+  margin-right: 8px;
+}
+.plate input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-weight: 700;
+  font-size: 34px;
+  letter-spacing: 0.06em;
+  color: var(--signal-ink);
+  outline: none;
+}
+.plate input::placeholder { color: rgba(42, 33, 0, 0.35); }
+.plate:focus-within { outline: 3px solid var(--route); outline-offset: 3px; }
+button, .btn {
+  font: inherit;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 12px 16px;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+}
+.primary { background: var(--asphalt); color: var(--paper); border: 0; }
+.secondary { background: transparent; color: var(--asphalt); border: 1px solid var(--line); }
+button:focus-visible, .btn:focus-visible { outline: 3px solid var(--route); outline-offset: 2px; }
+.error { color: var(--bad); font-size: 15px; margin: 0; min-height: 1.5em; }
+
+.result { display: none; flex-direction: column; gap: 16px; }
+.result.show { display: flex; }
+.device-name {
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-weight: 600;
+  font-size: 26px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--good); flex: none; }
+.dot.offline { background: var(--bad); }
+dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; }
+dt { color: var(--muted); }
+dd { margin: 0; font-weight: 500; font-variant-numeric: tabular-nums; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions > * { flex: 1; }
+.hint { color: var(--muted); font-size: 14px; margin: 0; }
+
+#map { height: 100%; width: 100%; background: var(--line); }
+.pin {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--signal);
+  border: 4px solid #1E2329;
+  box-shadow: 0 0 0 6px rgba(255, 199, 44, 0.35);
+}
+
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 55vh; height: auto; }
+  .panel { border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
+  h1 { font-size: 34px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="panel">
+    <div>
+      <h1>Find the tracker</h1>
+      <p class="lede">Enter the mobile number of the tracker's SIM card to see where it is right now.</p>
+    </div>
+
+    <form id="find">
+      <label for="num">Tracker mobile number</label>
+      <div class="plate">
+        <span aria-hidden="true">+91</span>
+        <input id="num" inputmode="numeric" autocomplete="off" placeholder="98765 43210" maxlength="14">
+      </div>
+      <button class="primary" type="submit">Find device</button>
+      <p class="error" id="err" role="alert"></p>
+    </form>
+
+    <div class="result" id="result" aria-live="polite">
+      <p class="device-name"><span class="dot" id="dot"></span><span id="dname"></span></p>
+      <dl>
+        <dt>Status</dt><dd id="status"></dd>
+        <dt>Last update</dt><dd id="seen"></dd>
+        <dt>Speed</dt><dd id="speed"></dd>
+        <dt>Position</dt><dd id="coords"></dd>
+      </dl>
+      <div class="actions">
+        <a class="btn primary" id="gmaps" target="_blank" rel="noopener">Open in Google Maps</a>
+        <button class="secondary" type="button" id="share">Copy share link</button>
+      </div>
+      <p class="hint" id="refresh"></p>
+    </div>
+  </section>
+  <div id="map" role="region" aria-label="Map showing the tracker's location"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const map = L.map("map").setView([22.5, 79], 5);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: "&copy; OpenStreetMap contributors"
+}).addTo(map);
+
+const icon = L.divIcon({ className: "", html: '<div class="pin"></div>', iconSize: [22, 22], iconAnchor: [11, 11] });
+let marker = null, trail = null, timer = null, current = null, firstFix = true;
+
+const $ = id => document.getElementById(id);
+const clean = v => v.replace(/\D/g, "").slice(-10);
+
+function ago(date) {
+  const s = Math.round((Date.now() - date) / 1000);
+  if (s < 60) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + " min ago";
+  const h = Math.round(m / 60);
+  if (h < 48) return h + " hr ago";
+  return Math.round(h / 24) + " days ago";
+}
+
+async function load() {
+  const d = DEVICES[current];
+  const url = "https://api.thingspeak.com/channels/" + d.channel + "/feeds.json?results=30" +
+              (d.readKey ? "&api_key=" + encodeURIComponent(d.readKey) : "");
+  let data;
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    data = await r.json();
+  } catch (e) {
+    $("err").textContent = "Couldn't reach the tracking server. Check your internet connection; the page will retry automatically.";
+    return;
+  }
+  const pts = (data.feeds || [])
+    .map(f => ({ lat: parseFloat(f.field1), lng: parseFloat(f.field2), kmh: parseFloat(f.field3), t: new Date(f.created_at) }))
+    .filter(p => isFinite(p.lat) && isFinite(p.lng) && !(p.lat === 0 && p.lng === 0));
+
+  if (!pts.length) {
+    $("err").textContent = "This tracker hasn't sent a location yet. Make sure it's powered on and has a clear view of the sky.";
+    $("result").classList.remove("show");
+    return;
+  }
+  $("err").textContent = "";
+  const last = pts[pts.length - 1];
+  const offline = (Date.now() - last.t) > OFFLINE_AFTER_MINUTES * 60000;
+
+  $("dname").textContent = d.name || ("Tracker " + current);
+  $("dot").classList.toggle("offline", offline);
+  $("status").textContent = offline ? "Offline, showing last known position" : "Online";
+  $("seen").textContent = ago(last.t) + " (" + last.t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ")";
+  $("speed").textContent = isFinite(last.kmh) ? last.kmh.toFixed(0) + " km/h" : "Unknown";
+  $("coords").textContent = last.lat.toFixed(5) + ", " + last.lng.toFixed(5);
+  $("gmaps").href = "https://maps.google.com/?q=" + last.lat + "," + last.lng;
+  $("refresh").textContent = "Updates automatically every " + REFRESH_SECONDS + " seconds.";
+  $("result").classList.add("show");
+
+  const ll = [last.lat, last.lng];
+  if (!marker) marker = L.marker(ll, { icon }).addTo(map); else marker.setLatLng(ll);
+  const line = pts.map(p => [p.lat, p.lng]);
+  if (!trail) trail = L.polyline(line, { color: getComputedStyle(document.documentElement).getPropertyValue("--route").trim() || "#2357A8", weight: 4, opacity: 0.8 }).addTo(map);
+  else trail.setLatLngs(line);
+  if (firstFix) { map.setView(ll, 16); firstFix = false; }
+}
+
+function start(num) {
+  const n = clean(num);
+  $("result").classList.remove("show");
+  if (n.length !== 10) { $("err").textContent = "Enter the full 10-digit mobile number."; return; }
+  if (!DEVICES[n]) { $("err").textContent = "No tracker is registered to this number. Check the number and try again."; return; }
+  current = n;
+  firstFix = true;
+  $("num").value = n.slice(0, 5) + " " + n.slice(5);
+  history.replaceState(null, "", "?n=" + n);
+  clearInterval(timer);
+  load();
+  timer = setInterval(load, REFRESH_SECONDS * 1000);
+}
+
+$("find").addEventListener("submit", e => { e.preventDefault(); start($("num").value); });
+$("num").addEventListener("input", () => { $("err").textContent = ""; });
+$("share").addEventListener("click", async () => {
+  const link = location.origin + location.pathname + "?n=" + current;
+  try { await navigator.clipboard.writeText(link); $("share").textContent = "Link copied"; }
+  catch (e) { prompt("Copy this link:", link); }
+  setTimeout(() => { $("share").textContent = "Copy share link"; }, 2000);
+});
+
+const pre = new URLSearchParams(location.search).get("n");
+if (pre) start(pre);
+</script>
+</body>
+</html>
